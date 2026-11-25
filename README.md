@@ -26,6 +26,13 @@ patchbay. Connect a guitar source to `OpenGP5 GP-50:in` or add
 Scroll or drag to turn the knobs. Replace `tremolo` with the path to any
 compatible OpenGP5 firmware source directory.
 
+The [LiveWDF GP-50 model pack](https://github.com/jopdorp/OpenGP5/pull/3) runs
+in the same window. The right encoder or FS2 switches between the DOD 250
+and MXR Micro Amp circuits. The second screenshot shows sample playback.
+
+<img src="docs/images/gp50-dod250.png" alt="GP-50 emulator showing DOD 250 and Play Sample" width="380">
+<img src="docs/images/gp50-micro-amp.png" alt="GP-50 emulator showing Micro Amp while a sample plays" width="380">
+
 The scripted simulator runs without JACK or SDL2. The default input is a
 plucked tone. It saves a stereo WAV and screenshots under `build/sim/`.
 
