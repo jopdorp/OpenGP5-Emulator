@@ -1,0 +1,8 @@
+/build/
+/firmware/
+__pycache__/
+.venv/
+*.so
+*.wav
+*.mp4
+*.nam

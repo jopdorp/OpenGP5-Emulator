@@ -1,0 +1,114 @@
+# The simulator
+
+`tools/simulate.py` runs both halves of a build on your computer. The scripted
+mode reads a control script and saves screen images and sound files. It covers:
+
+- both chips' code;
+- the audio link between them;
+- the screen, saved as pictures;
+- the controls, from a script;
+- guitar in and sound out as WAV files.
+
+You need Python and a C compiler (`cc`), but no pedal or cross-compilers.
+Install Pillow with `pip install pillow` if you want screen images.
+From the OpenGP5-Emulator folder, run:
+
+```
+python3 tools/simulate.py tremolo --script controls.txt --in guitar.wav --out out.wav
+```
+
+Without `--in` it plays a plucked test tone for 4 s. Screens go to `build/sim/<id>/` (`end.png` is the screen at the
+end) and the sound to `build/sim/<id>.wav`.
+
+## Live GP-50 window
+
+On Linux, install the SDL2 (2.0.18 or later), JACK and libsamplerate development
+libraries and `pkg-config`. Run the simulator under PipeWire's JACK client
+wrapper, or omit `pw-jack` when running a JACK server directly.
+
+```sh
+pw-jack python3 tools/simulate.py tremolo --gp50 --live
+```
+
+Scroll or drag on the encoders, or click their `−` and `+` sides. The buttons
+send press and release events to the simulated firmware. In Helvum, qpwgraph,
+or a JACK patchbay, connect your source to `OpenGP5 GP-50:in` and connect
+`out_l` and `out_r` to your monitor or recorder. The app leaves the ports
+unconnected at startup. It processes audio at the firmware's sample rate and
+resamples when the audio graph uses a different rate.
+
+Add `--demo guitar.wav` with a 16-bit or 24-bit PCM WAV. Click **Play Sample**
+or press **Space** to send the first channel through the firmware. Press again
+to stop. The simulator returns to the JACK input when playback ends.
+
+## A script
+
+One line per action, the time in seconds first:
+
+```
+# the tremolo: faster, saved into preset 2, then bypassed
+0.2  shot start
+0.5  para click            # adjust RATE
+0.6  para turn 10          # +1.0 Hz
+0.8  para click
+1.0  para turn 3           # down to PRESET
+1.1  para click
+1.2  para turn 1           # P2
+1.4  para hold             # held 0.8 s: saves at 2.0 s
+2.1  shot saved
+2.5  foot
+3.0  set Shape Square      # as a computer sets it
+3.2  knob 128
+```
+
+| Script action | Meaning |
+|---|---|
+| `foot` | press and let go of the foot switch (`foot down` / `foot up`: one edge) |
+| `para click`, `para hold` | push PARA and let go after 0.1 s / 0.8 s (`para down` / `para up`: one edge) |
+| `para turn N` | turn PARA N clicks (negative: back) |
+| `knob N` | the volume knob, 0..255 |
+| `set NAME VALUE` | a parameter, as Launchpad sets it: by the name shown (`Loop_level` for "Loop level") or the code's (`LOOPLV`); a choice by its name |
+| `preset load N`, `preset save N` | presets, numbered from 1 as on the pedal |
+| `shot NAME` | the screen now, as `NAME.png` |
+| `storage changed` | as when a computer changed the firmware's files |
+
+While it runs, it prints the log (`gp5_log` on either processor, the DSP's lines marked `dsp:`) and every LED change.
+At the end, the tool reports the largest screen update from one `fw_draw` call.
+On the pedal, that transfer takes time in a main-loop pass. Draw a strip at a time to leave room for other work.
+OpenGP5 examples send up to about 8 KB of the 25.6 KB screen in a pass. The tool reports the first full draw as a separate value.
+
+## More options
+
+| Option | Meaning |
+|---|---|
+| `--seconds S` | how long (default: the input's length) |
+| `--knob N` | where the volume knob starts (default 255) |
+| `--store FILE` | keep saved settings and presets in `FILE` between runs, as the pedal keeps them across power-off |
+| `--files DIR` | the firmware's files (`gp5_file`): every file in `DIR`, by its name |
+| `--check` | build with the address and undefined-behaviour checkers: a crash or a bad memory access stops with the file and line it happened on |
+| `--shots DIR`, `--out WAV` | where screens and sound go |
+
+## How close is it to the pedal?
+
+**The same:**
+- The firmware's own code, both halves.
+- The platform's parameters, presets, UI kit, text drawing and maths (`gp5_math.c`), so the arithmetic is the pedal's.
+- The timing: 64-sample blocks, `fw_tick` every 10 ms, the PARA hold at 0.6 s, the order of the main loop, and the
+  audio link's words arriving three blocks on (both normal and `link_early` exchanges).
+
+**Different:**
+- **Speed is not simulated.** Code that is too slow for the pedal runs fine here: measure with
+  `gp5_link.py status` on the pedal. `GP5_CYCLE_COUNT()` and the control chip's cycle counters read 0.
+- The DSP-extension instructions of the control chip (`kmmac` and friends) don't exist on a computer. Code that
+  uses them needs a portable version for when `__NDS32_EXT_DSP__` isn't defined (NAM Loader's kernel has one).
+- Saved data lives in memory or the `--store` file, not flash, so flash timing and wear don't apply.
+- Controls are exact: no bounce, no noise on the knob.
+
+Use the simulator to check sound and screen code after a change. You can also run it in continuous integration (CI),
+the build and test process that runs on each push. Check speed and control feel on the pedal.
+
+## How it works
+
+`platform/host/sim_dsp.c` builds the DSP half as a library, and `platform/host/sim.c` is the control half's main
+program with the platform's calls. They are kept apart because each half has its own `fw_init`, `sinf` and so on.
+`tools/test_simulate.py` checks the simulator itself.
