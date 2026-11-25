@@ -1,0 +1,38 @@
+name: Emulator
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential python3 pkg-config libsdl2-dev libjack-jackd2-dev libsamplerate0-dev
+      - name: Test GP-5 and GP-50 scripted simulation
+        run: python3 tools/test_simulate.py
+      - name: Build the live SDL and JACK simulator
+        working-directory: tools
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+
+          from simulate import build, firmware_dir, manifest
+
+          firmware = firmware_dir("tremolo")
+          with TemporaryDirectory() as directory:
+              build(firmware, manifest.load(firmware), Path(directory), gp50=True, live=True)
+          PY
