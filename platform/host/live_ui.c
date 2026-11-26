@@ -11,6 +11,7 @@ enum { MOUSE = 1, KEY = 2 };
 static const uint32_t ink = 0xe8edf3, muted = 0xa0abb9, accent = 0x73d2c3;
 static const SDL_Rect lcd = { 24, 74, LCD_W * 3, LCD_H * 3 };
 static const SDL_Rect demo = { 715, 416, 172, 42 };
+static const SDL_Rect expression = { 600, 296, 256, 17 };
 static const struct {
     enum sim_control control;
     const char *label, *keys;
@@ -39,8 +40,8 @@ static const struct {
 struct ui_state {
     int rotation[SDL_arraysize(knobs)];
     unsigned pressed[SDL_arraysize(buttons)];
-    int knob, button, delta, click;
-    bool dragged, demo_playing;
+    int knob, button, delta, click, expression;
+    bool dragged, demo_playing, expression_drag;
 };
 
 static void color(SDL_Renderer *r, uint32_t rgb)
@@ -127,6 +128,16 @@ static void redraw(SDL_Renderer *r, SDL_Texture *screen, const char *title,
         center_text(r, button.x + button.w / 2, button.y + (button.h - 14) / 2, 2,
                     down ? 0x14221f : ink, buttons[i].label);
     }
+    text(r, 531, 300, 1, muted, "Expression");
+    fill(r, expression.x, 302, expression.w, 4, 0x536173);
+    if (ui->expression >= 0) {
+        char value[12];
+        snprintf(value, sizeof value, "%u", (unsigned)ui->expression);
+        disk(r, expression.x + ui->expression, 304, 5, accent);
+        text(r, 863, 300, 1, ink, value);
+    } else {
+        text(r, 863, 300, 1, muted, "--");
+    }
     disk(r, 538, 426, 5, led_color(led));
     text(r, 553, 420, 2, muted, "Effect LED");
     if (sim_live_demo_available()) {
@@ -168,17 +179,34 @@ static int hit_knob(int x, int y)
     return (x - 532) / 88;
 }
 
+static void move_expression(struct ui_state *ui, int x)
+{
+    int position = x - expression.x;
+    int value = position < 0 ? 0 : position >= expression.w ? expression.w - 1 : position;
+    if (value == ui->expression) return;
+    ui->expression = value;
+    sim_live_control(SIM_EXPRESSION, value);
+}
+
 static void mouse_button(struct ui_state *ui, const SDL_MouseButtonEvent *event)
 {
     if (event->button != SDL_BUTTON_LEFT) return;
     if (event->type == SDL_MOUSEBUTTONUP) {
         if (ui->button >= 0) press(ui, ui->button, MOUSE, false);
         if (ui->knob >= 0 && !ui->dragged) turn(ui, ui->knob, ui->click);
+        if (ui->expression_drag) move_expression(ui, event->x);
+        ui->expression_drag = false;
         ui->button = ui->knob = -1;
         SDL_CaptureMouse(SDL_FALSE);
         return;
     }
     SDL_Point point = { event->x, event->y };
+    if (SDL_PointInRect(&point, &expression)) {
+        ui->expression_drag = true;
+        move_expression(ui, point.x);
+        SDL_CaptureMouse(SDL_TRUE);
+        return;
+    }
     if (SDL_PointInRect(&point, &demo) && sim_live_demo_available()) {
         sim_live_control(SIM_DEMO, !ui->demo_playing);
         return;
@@ -223,7 +251,9 @@ static bool handle(SDL_Renderer *r, struct ui_state *ui, const SDL_Event *event)
         mouse_button(ui, &event->button);
         break;
     case SDL_MOUSEMOTION:
-        if (ui->knob >= 0) {
+        if (ui->expression_drag) {
+            move_expression(ui, event->motion.x);
+        } else if (ui->knob >= 0) {
             ui->delta -= event->motion.yrel;
             int steps = ui->delta / DRAG_STEP;
             if (steps) ui->dragged = true;
@@ -246,6 +276,7 @@ static bool handle(SDL_Renderer *r, struct ui_state *ui, const SDL_Event *event)
         if (event->window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
             for (unsigned i = 0; i < SDL_arraysize(buttons); i++) press(ui, (int)i, MOUSE | KEY, false);
             ui->button = ui->knob = -1;
+            ui->expression_drag = false;
             SDL_CaptureMouse(SDL_FALSE);
         }
         break;
@@ -271,7 +302,7 @@ int sim_live_ui(const char *title, unsigned rate)
         result = 1;
     } else {
         SDL_SetWindowMinimumSize(window, WIDTH * 2 / 3, HEIGHT * 2 / 3);
-        struct ui_state ui = { .button = -1, .knob = -1 };
+        struct ui_state ui = { .button = -1, .knob = -1, .expression = -1 };
         bool show = true;
         while (show && sim_live_running()) {
             SDL_Event event;
