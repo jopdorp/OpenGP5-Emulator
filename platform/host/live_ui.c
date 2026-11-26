@@ -159,6 +159,8 @@ static void redraw(SDL_Renderer *r, SDL_Texture *screen, const char *title,
     } else {
         text(r, 751, 424, 1, muted, "Enter: PARA push");
     }
+    text(r, 531, 490, 1, muted, "Simulated power and wireless");
+    text(r, 531, 505, 1, muted, "F6/F7 Battery  F8 Charge  F9 Bluetooth");
     fill(r, 24, HEIGHT - 46, WIDTH - 48, 1, 0x303843);
     snprintf(audio, sizeof audio, "JACK: OpenGP5 GP-50 / in, out_l, out_r | DSP %u Hz", rate);
     text(r, 24, HEIGHT - 30, 2, muted, audio);
@@ -247,6 +249,12 @@ static bool handle(SDL_Renderer *r, struct ui_state *ui, const SDL_Event *event)
         SDL_Keycode key = event->key.keysym.sym;
         bool down = event->type == SDL_KEYDOWN;
         if (key == SDLK_ESCAPE && down) return false;
+        if (down && (key == SDLK_F6 || key == SDLK_F7))
+            sim_live_control(SIM_BATTERY_STEP, key == SDLK_F6 ? -1 : 1);
+        if (down && !event->key.repeat) {
+            if (key == SDLK_F8) sim_live_control(SIM_CHARGE_TOGGLE, 0);
+            if (key == SDLK_F9) sim_live_control(SIM_BT_CYCLE, 0);
+        }
         if (key == SDLK_SPACE && down && !event->key.repeat && sim_live_demo_available())
             sim_live_control(SIM_DEMO, !ui->demo_playing);
         for (unsigned i = 0; i < SDL_arraysize(buttons); i++)

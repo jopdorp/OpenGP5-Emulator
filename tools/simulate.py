@@ -95,6 +95,16 @@ def events(script, names, choices, shown, gp50=False):
             if len(w) != 2 or not re.fullmatch(r"[0-9]{1,3}", w[1]) or int(w[1]) > 255:
                 bad("expression N (0..255)")
             out.append((t, f"expression {int(w[1])}"))
+        elif gp50 and w and w[0] in ("battery", "charging", "bluetooth"):
+            states = {
+                "battery": ("unknown", "0", "1", "2", "3", "4"),
+                "charging": ("unknown", "off", "on"),
+                "bluetooth": ("off", "unpaired", "paired"),
+            }[w[0]]
+            if len(w) != 2 or w[1] not in states:
+                bad(f"{w[0]} {' | '.join(states)}")
+            offset = -1 if states[0] == "unknown" else 0
+            out.append((t, f"{w[0]} {states.index(w[1]) + offset}"))
         elif w[:1] == ["knob"] and len(w) == 2 and w[1].isdigit(): out.append((t, f"knob {int(w[1])}"))
         elif w[:1] == ["set"] and len(w) == 3:
             k, v = line[2].upper(), line[3]

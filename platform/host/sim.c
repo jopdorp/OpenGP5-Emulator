@@ -81,6 +81,11 @@ void gp5_level_own(int own) { level_owned = own != 0; }
 void gp5_level_set(unsigned l) { level = l > 255u ? 255u : l; }
 void gp5_led(uint32_t c) { led = c; }
 
+#ifdef GP50_BOARD
+static gp50_status_t status = { 3, 0, GP50_BT_UNPAIRED };
+gp50_status_t gp50_status(void) { return status; }
+#endif
+
 /* ---- log ---- */
 void gp5_log(const char *fmt, ...)
 {
@@ -391,6 +396,13 @@ void sim_control(enum sim_control control, int value)
         break;
     case SIM_FS2: fw_gp50_button(4, value); break;
     case SIM_EXPRESSION: fw_gp50_expression((unsigned)(value < 0 ? 0 : value > 255 ? 255 : value)); break;
+    case SIM_BATTERY_STEP: {
+        int bars = status.battery + value;
+        status.battery = bars < 0 ? 0 : bars > 4 ? 4 : bars;
+        break;
+    }
+    case SIM_CHARGE_TOGGLE: status.charging = !status.charging; break;
+    case SIM_BT_CYCLE: status.bluetooth = (status.bluetooth + 1) % (GP50_BT_PAIRED + 1); break;
 #endif
     default: break;
     }
@@ -482,6 +494,9 @@ int main(int argc, char **argv)
             else if (!strcmp(next_op, "encoder")) sim_control(SIM_LEFT + a1, (int)a2);
             else if (!strcmp(next_op, "button")) sim_control(a1 == 4 ? SIM_FS2 : SIM_DRUM + a1, (int)a2);
             else if (!strcmp(next_op, "expression")) sim_control(SIM_EXPRESSION, (int)a1);
+            else if (!strcmp(next_op, "battery")) status.battery = (int)a1;
+            else if (!strcmp(next_op, "charging")) status.charging = (int)a1;
+            else if (!strcmp(next_op, "bluetooth")) status.bluetooth = (unsigned)a1;
 #endif
             else if (!strcmp(next_op, "knob")) sim_control(SIM_VOLUME, (int)a1);
 #ifdef GP5_HAS_PARAMS

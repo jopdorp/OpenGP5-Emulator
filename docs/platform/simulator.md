@@ -33,8 +33,7 @@ pw-jack python3 tools/simulate.py tremolo --gp50 --live
 Scroll or drag on the encoders, or click their `−` and `+` sides. The buttons
 send press and release events to the simulated firmware. Click or drag the
 **Expression** slider to send a pedal position. It leaves the current preset's
-expression setting alone until you move it. In Helvum, qpwgraph,
-or a JACK patchbay, connect your source to `OpenGP5 GP-50:in` and connect
+expression setting alone until you move it. In Helvum, qpwgraph, or a JACK patchbay, connect your source to `OpenGP5 GP-50:in` and connect
 `out_l` and `out_r` to your monitor or recorder. The app leaves the ports
 unconnected at startup. It processes audio at the firmware's sample rate and
 resamples when the audio graph uses a different rate.
@@ -70,6 +69,9 @@ One line per action, the time in seconds first:
 | `para turn N` | turn PARA N clicks (negative: back) |
 | `knob N` | the volume knob, 0..255 |
 | `expression N` | inject a GP-50 expression reading, 0..255 |
+| `battery N` | set the GP-50 battery gauge to 0..4 bars or `unknown` |
+| `charging on/off/unknown` | set the GP-50 charge indicator |
+| `bluetooth off/unpaired/paired` | set the GP-50 wireless indicator |
 | `set NAME VALUE` | a parameter, as Launchpad sets it: by the name shown (`Loop_level` for "Loop level") or the code's (`LOOPLV`); a choice by its name |
 | `preset load N`, `preset save N` | presets, numbered from 1 as on the pedal |
 | `shot NAME` | the screen now, as `NAME.png` |
