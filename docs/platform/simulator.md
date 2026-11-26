@@ -67,6 +67,7 @@ One line per action, the time in seconds first:
 | `para click`, `para hold` | push PARA and let go after 0.1 s / 0.8 s (`para down` / `para up`: one edge) |
 | `para turn N` | turn PARA N clicks (negative: back) |
 | `knob N` | the volume knob, 0..255 |
+| `expression N` | inject a GP-50 expression reading, 0..255 |
 | `set NAME VALUE` | a parameter, as Launchpad sets it: by the name shown (`Loop_level` for "Loop level") or the code's (`LOOPLV`); a choice by its name |
 | `preset load N`, `preset save N` | presets, numbered from 1 as on the pedal |
 | `shot NAME` | the screen now, as `NAME.png` |
@@ -86,6 +87,7 @@ OpenGP5 examples send up to about 8 KB of the 25.6 KB screen in a pass. The tool
 | `--store FILE` | keep saved settings and presets in `FILE` between runs, as the pedal keeps them across power-off |
 | `--files DIR` | the firmware's files (`gp5_file`): every file in `DIR`, by its name |
 | `--check` | build with the address and undefined-behaviour checkers: a crash or a bad memory access stops with the file and line it happened on |
+| `--host-dsp LIB` | load a prebuilt native DSP library |
 | `--shots DIR`, `--out WAV` | where screens and sound go |
 
 ## How close is it to the pedal?
@@ -112,3 +114,14 @@ the build and test process that runs on each push. Check speed and control feel 
 `platform/host/sim_dsp.c` builds the DSP half as a library, and `platform/host/sim.c` is the control half's main
 program with the platform's calls. They are kept apart because each half has its own `fw_init`, `sinf` and so on.
 `tools/test_simulate.py` checks the simulator itself.
+
+Use `--host-dsp` in either mode to supply the DSP library and keep the firmware's
+controller and UI. Export the C symbols `sim_dsp_init`, `sim_dsp_command`,
+`sim_dsp_block`, `sim_dsp_link`, `sim_dsp_link_words`, `sim_dsp_link_early`, and
+`sim_dsp_sample_rate` as defined in `platform/host/sim_dsp.c`. The reported sample
+rate must match `firmware.json`. Build the supplied library with sanitizers
+if it also needs checking under `--check`.
+
+The GP-50 expression script action calls `fw_gp50_expression(unsigned value)`
+in the controller. A firmware can implement this hook and send any associated
+parameter changes through its usual control path.

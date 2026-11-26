@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks of the simulator (tools/simulate.py) on the tremolo: a script's controls, parameters, presets, saving
 between runs, LEDs, screens and sound. python3 tools/test_simulate.py (needs cc)"""
-import math, pathlib, subprocess, sys, tempfile, wave
+import json, math, pathlib, shutil, subprocess, sys, tempfile, wave
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 fails = 0
@@ -13,9 +13,9 @@ def check(ok, what):
     fails += not ok
 
 
-def run(d, name, script, *extra):
+def run(d, name, script, *extra, firmware="tremolo"):
     (d / f"{name}.txt").write_text(script)
-    r = subprocess.run([sys.executable, str(ROOT / "tools/simulate.py"), "tremolo", "--seconds", "2", "--script", str(d / f"{name}.txt"),
+    r = subprocess.run([sys.executable, str(ROOT / "tools/simulate.py"), str(firmware), "--seconds", "2", "--script", str(d / f"{name}.txt"),
                         "--out", str(d / f"{name}.wav"), "--shots", str(d / name), *extra], capture_output=True, text=True)
     if r.returncode: print(r.stdout, r.stderr)
     return r
@@ -27,6 +27,56 @@ def level(path):
     s = [int.from_bytes(b[i:i + 3], "little", signed=True) for i in range(0, len(b), 6)]
     m = s[len(s) // 4:]                                                    # past the start
     return 10 * math.log10(sum(x * x for x in m) / len(m) / 2 ** 46 + 1e-20), s
+
+
+def native_dsp(d):
+    firmware = d / "native-firmware"
+    shutil.copytree(ROOT / "opengp5/firmwares/tremolo", firmware, ignore=shutil.ignore_patterns("dsp"))
+    (firmware / "nds32/expression.c").write_text("""
+#include "gp5_params.h"
+void fw_gp50_expression(unsigned value) { gp5_param_set(GP5_P_DEPTH, value * 100 / 255); }
+""")
+    source = d / "native.c"
+    lib = d / "native.so"
+    source.write_text("""
+#include <stdint.h>
+static int32_t link[1], depth;
+unsigned sim_dsp_link_words(void) { return 0; }
+unsigned sim_dsp_sample_rate(void) { return 44100; }
+int32_t *sim_dsp_link(int which) { (void)which; return link; }
+int sim_dsp_link_early(const int32_t *in) { (void)in; return 0; }
+void sim_dsp_init(const uint32_t *ms) { (void)ms; }
+int sim_dsp_command(const uint8_t *p, unsigned n) {
+    if (n >= 12 && p[0] == 0x10 && p[1] == 0x7f && p[4] == 1) depth = p[8];
+    return 1;
+}
+void sim_dsp_block(const int32_t *in, int32_t *l, int32_t *r) {
+    for (unsigned i = 0; i < 64; ++i) {
+        l[i] = (in[i] / 100) * depth;
+        r[i] = 0;
+    }
+}
+""")
+    subprocess.run(["cc", "-fPIC", "-shared", str(source), "-o", str(lib)], check=True)
+    opts = "--gp50", "--host-dsp", str(lib)
+    expr = run(d, "native-expression", "0.2 expression 204\n", *opts, firmware=firmware)
+    param = run(d, "native-parameter", "0.2 set Depth 80\n", *opts, firmware=firmware)
+    if expr.returncode or param.returncode:
+        check(False, "native DSP selection and GP-50 expression")
+    else:
+        with wave.open(str(d / "native-expression.wav")) as wav:
+            audio = wav.readframes(wav.getnframes())
+        check((d / "native-expression.wav").read_bytes() == (d / "native-parameter.wav").read_bytes()
+              and any(audio[i:i + 3] != b"\0\0\0" for i in range(0, len(audio), 6))
+              and all(audio[i:i + 3] == b"\0\0\0" for i in range(3, len(audio), 6)),
+              "native DSP selection and GP-50 expression reach the same parameters")
+    manifest = firmware / "firmware.json"
+    data = json.loads(manifest.read_text())
+    data.setdefault("audio", {})["sample_rate"] = 48000
+    manifest.write_text(json.dumps(data))
+    wrong_rate = run(d, "native-rate", "", *opts, firmware=firmware)
+    check(wrong_rate.returncode != 0 and "DSP sample rate 44100 does not match firmware rate 48000" in wrong_rate.stderr,
+          "native DSP rate must match the firmware")
 
 
 with tempfile.TemporaryDirectory() as d:
@@ -59,5 +109,6 @@ with tempfile.TemporaryDirectory() as d:
     check(controls.returncode == parameters.returncode == 0 and
           (d / "gp50-controls.wav").read_bytes() == (d / "gp50-parameters.wav").read_bytes(),
           "GP-50 encoders and FS2 reach the DSP parameters")
+    native_dsp(d)
 print("ALL OK" if not fails else f"{fails} FAILED")
 sys.exit(1 if fails else 0)

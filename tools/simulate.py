@@ -25,6 +25,7 @@ No pedal needed (docs/platform/simulator.md).
   --check         build with the address and undefined-behaviour checkers: a crash or a bad memory access stops
                   with the line it happened on (slower)
   --gp50          160 x 128 screen and extra inputs, e.g. "left turn 2", "save click", "fs2 down"
+  --host-dsp LIB  use a prebuilt native DSP library with the simulator ABI
   --live          open the GP-50 window with JACK audio ports (requires --gp50)
   --demo WAV      add a playable demo clip to the live window
 The log (gp5_log on either processor) and the LEDs print as the run goes. The timing is the pedal's: 64-sample
@@ -90,6 +91,10 @@ def events(script, names, choices, shown, gp50=False):
             elif len(w) == 2 and w[1] in ("down", "up"):
                 out.append((t, f"button {button} {int(w[1] == 'down')}"))
             else: bad(f"{w[0]} click | down | up")
+        elif gp50 and w[:1] == ["expression"]:
+            if len(w) != 2 or not re.fullmatch(r"[0-9]{1,3}", w[1]) or int(w[1]) > 255:
+                bad("expression N (0..255)")
+            out.append((t, f"expression {int(w[1])}"))
         elif w[:1] == ["knob"] and len(w) == 2 and w[1].isdigit(): out.append((t, f"knob {int(w[1])}"))
         elif w[:1] == ["set"] and len(w) == 3:
             k, v = line[2].upper(), line[3]
@@ -110,7 +115,7 @@ def events(script, names, choices, shown, gp50=False):
     return sorted(out, key=lambda e: e[0])
 
 
-def build(fw, m, d, check=False, gp50=False, live=False):
+def build(fw, m, d, check=False, gp50=False, live=False, host_dsp=None):
     plat = PLATFORM
     flags = manifest.flags(m, fw) + (["-DGP50_BOARD=1"] if gp50 else [])
     sources, libraries = [], []
@@ -122,11 +127,12 @@ def build(fw, m, d, check=False, gp50=False, live=False):
             sys.exit("live mode needs pkg-config and the JACK, libsamplerate, and SDL2 development libraries")
         flags.append("-DSIM_LIVE")
         sources = [str(HOST / f"{name}.c") for name in ("live", "live_ui")]
-    lib, exe = d / "sim_dsp.so", d / "sim"
+    lib, exe = host_dsp or d / "sim_dsp.so", d / "sim"
     cc = ["cc", "-std=gnu11" if live else "-std=gnu99", "-Wall", "-Wno-unused-function", "-Werror=implicit-function-declaration", "-fno-builtin", "-g", *flags,
           *(["-fsanitize=address,undefined", "-fno-sanitize=shift-base", "-fno-omit-frame-pointer"] if check else [])]
-    subprocess.run([*cc, "-O2", "-fPIC", "-shared", "-fvisibility=hidden", "-DGP5_HOST", f"-I{fw / 'dsp'}", f"-I{fw}",
-                    f"-I{plat / 'dsp'}", str(HOST / "sim_dsp.c"), str(plat / "dsp/gp5_math.c"), "-o", str(lib)], check=True)
+    if host_dsp is None:
+        subprocess.run([*cc, "-O2", "-fPIC", "-shared", "-fvisibility=hidden", "-DGP5_HOST", f"-I{fw / 'dsp'}", f"-I{fw}",
+                        f"-I{plat / 'dsp'}", str(HOST / "sim_dsp.c"), str(plat / "dsp/gp5_math.c"), "-o", str(lib)], check=True)
     ctl = sorted((fw / "nds32").glob("*.c"))
     math_inline = any('#include "gp5_math.c"' in c.read_text(errors="replace") for c in ctl)
     subprocess.run([*cc, "-O1", "-DGP5_HOST", "-DUI_PANEL", "-DGP5_CTL_SIDE", f"-I{plat / 'nds32'}", f"-I{HOST / 'include'}",
@@ -145,12 +151,17 @@ def main():
     ap.add_argument("--shots"); ap.add_argument("--knob", type=int, default=255)
     ap.add_argument("--store"); ap.add_argument("--files")
     ap.add_argument("--gp50", action="store_true", help="simulate the GP-50 screen size and inputs")
+    ap.add_argument("--host-dsp", type=pathlib.Path, metavar="LIB", help="use a prebuilt native DSP library")
     ap.add_argument("--live", action="store_true", help="open a GP-50 window and JACK audio ports")
     ap.add_argument("--demo", metavar="WAV", help="enable sample playback in the live window")
     ap.add_argument("--check", action="store_true", help="build with the address and undefined-behaviour checkers")
     a = ap.parse_args()
     if a.demo and not a.live:
         ap.error("--demo requires --live")
+    if a.host_dsp is not None:
+        a.host_dsp = a.host_dsp.resolve()
+        if not a.host_dsp.is_file():
+            ap.error(f"--host-dsp: no such library: {a.host_dsp}")
     fw = firmware_dir(a.firmware).resolve()
     try: m = manifest.load(fw)
     except manifest.ManifestError as e: sys.exit(str(e))
@@ -173,7 +184,7 @@ def main():
                 raw = d / "demo.raw"
                 raw.write_bytes(samples.tobytes())
                 demo_args = [str(raw), str(rate)]
-            lib, exe = build(fw, m, d, a.check, a.gp50, a.live)
+            lib, exe = build(fw, m, d, a.check, a.gp50, a.live, a.host_dsp)
             return subprocess.call([str(exe), str(lib), m["name"], *demo_args])
     rate = m["audio"]["sample_rate"]
     names, choices, shown = param_names(fw)
@@ -187,7 +198,7 @@ def main():
     for old in shots.glob("*.p[np][gm]"): old.unlink()
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
-        lib, exe = build(fw, m, d, a.check, a.gp50)
+        lib, exe = build(fw, m, d, a.check, a.gp50, host_dsp=a.host_dsp)
         (d / "events.txt").write_text("".join(f"{t} {e}\n" for t, e in ev))
         (d / "in.raw").write_bytes(samples.tobytes())
         env = dict(os.environ, ASAN_OPTIONS=os.environ.get("ASAN_OPTIONS", "abort_on_error=0"))   # (--check: report, no crash report)
