@@ -54,6 +54,7 @@ __attribute__((weak)) void fw_para_turn(int detents) { (void)detents; }
 #ifdef GP50_BOARD
 __attribute__((weak)) void fw_gp50_encoder_turn(unsigned encoder, int detents) { (void)encoder; (void)detents; }
 __attribute__((weak)) void fw_gp50_button(unsigned button, int down) { (void)button; (void)down; }
+__attribute__((weak)) void fw_gp50_expression(unsigned value) { (void)value; }
 #endif
 __attribute__((weak)) void fw_storage_changed(void) {}
 __attribute__((weak)) void fw_dsp_ready(void) {}
@@ -265,6 +266,10 @@ int sim_open(const char *dsp_path)
     *(void **)&dsp_link_words = dlsym(lib, "sim_dsp_link_words"); *(void **)&dsp_link_early = dlsym(lib, "sim_dsp_link_early"); *(void **)&dsp_rate = dlsym(lib, "sim_dsp_sample_rate");
     if (!dsp_init || !dsp_link_early || !dsp_command || !dsp_block || !dsp_link || !dsp_link_words || !dsp_rate) { fprintf(stderr, "not a sim_dsp library\n"); return 2; }
     words = dsp_link_words(); rate = dsp_rate(); early = dsp_link_early(0);
+    if (rate != GP5_SAMPLE_RATE) {
+        fprintf(stderr, "DSP sample rate %u does not match firmware rate %u\n", rate, GP5_SAMPLE_RATE);
+        return 2;
+    }
     if (words > 512u) words = 512u;
 #ifdef GP5_HAS_PARAMS
     gp5_params_init();
@@ -305,6 +310,7 @@ void sim_control(enum sim_control control, int value)
         fw_gp50_button(control - SIM_DRUM, value);
         break;
     case SIM_FS2: fw_gp50_button(4, value); break;
+    case SIM_EXPRESSION: fw_gp50_expression((unsigned)(value < 0 ? 0 : value > 255 ? 255 : value)); break;
 #endif
     default: break;
     }
@@ -392,6 +398,7 @@ int main(int argc, char **argv)
 #ifdef GP50_BOARD
             else if (!strcmp(next_op, "encoder")) sim_control(SIM_LEFT + a1, (int)a2);
             else if (!strcmp(next_op, "button")) sim_control(a1 == 4 ? SIM_FS2 : SIM_DRUM + a1, (int)a2);
+            else if (!strcmp(next_op, "expression")) sim_control(SIM_EXPRESSION, (int)a1);
 #endif
             else if (!strcmp(next_op, "knob")) sim_control(SIM_VOLUME, (int)a1);
 #ifdef GP5_HAS_PARAMS
