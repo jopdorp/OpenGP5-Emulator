@@ -21,6 +21,11 @@
 #include <stdarg.h>
 #include <dlfcn.h>
 #include <dirent.h>
+#include <errno.h>
+#include <unistd.h>
+#ifdef SIM_LIVE
+#include <stdatomic.h>
+#endif
 #include "gp5_firmware.h"
 #include "gp5_fmt.h"
 #include "gp5_font.h"
@@ -152,8 +157,19 @@ static void shot(const char *dir, const char *name)
 
 /* ---- storage: records in memory (and a file between runs), files from a folder ---- */
 #define NREC 128
-static struct { uint32_t id; unsigned len; uint8_t d[GP5_STORE_MAX]; } recs[NREC];
+struct store_record { uint32_t id; unsigned len; uint8_t d[GP5_STORE_MAX]; };
+static struct store_record recs[NREC];
 static unsigned nrec;
+static const char *store_path;
+static int store_dirty;
+#ifdef SIM_LIVE
+static struct {
+    struct store_record records[NREC];
+    unsigned count;
+    atomic_bool full;
+} store_snapshot;
+static int store_retry;
+#endif
 unsigned gp5_store_load(uint32_t id, void *dst, unsigned max)
 {
     for (unsigned i = 0; i < nrec; i++)
@@ -168,16 +184,80 @@ int gp5_store_save(uint32_t id, const void *src, unsigned len)
     if (i == NREC) return -1;
     if (i == nrec) nrec++;
     recs[i].id = id; recs[i].len = len; memcpy(recs[i].d, src, len);
+    store_dirty = store_path != NULL;
     return 0;
 }
-static void store_file(const char *path, int save)
+
+static int write_store(const struct store_record *records, unsigned count)
 {
-    FILE *f = fopen(path, save ? "wb" : "rb");
-    if (!f) return;
-    if (save) { fwrite(&nrec, sizeof nrec, 1, f); fwrite(recs, sizeof recs[0], nrec, f); }
-    else if (fread(&nrec, sizeof nrec, 1, f) != 1 || nrec > NREC || fread(recs, sizeof recs[0], nrec, f) != nrec) nrec = 0;
-    fclose(f);
+    FILE *existing = fopen(store_path, "r+b");
+    if (existing) fclose(existing);
+    else if (errno != ENOENT) {
+        fprintf(stderr, "Could not write emulator patches to %s\n", store_path);
+        return -1;
+    }
+    char *temporary = malloc(strlen(store_path) + sizeof ".tmp.XXXXXX");
+    if (!temporary) return -1;
+    sprintf(temporary, "%s.tmp.XXXXXX", store_path);
+    int fd = mkstemp(temporary);
+    FILE *file = fd < 0 ? NULL : fdopen(fd, "wb");
+    int failed = !file;
+    if (file) {
+        failed = fwrite(&count, sizeof count, 1, file) != 1 ||
+                 fwrite(records, sizeof records[0], count, file) != count ||
+                 fflush(file) != 0 || fsync(fd) != 0;
+        if (fclose(file) != 0) failed = 1;
+    } else if (fd >= 0) close(fd);
+    if (!failed) failed = rename(temporary, store_path) != 0;
+    if (failed) {
+        if (fd >= 0) unlink(temporary);
+        fprintf(stderr, "Could not save emulator patches to %s\n", store_path);
+    }
+    free(temporary);
+    return failed ? -1 : 0;
 }
+
+int sim_store_open(const char *path)
+{
+    if (!path || !strcmp(path, "-")) return 0;
+    store_path = path;
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        if (errno == ENOENT) return 0;
+    } else {
+        int valid = fread(&nrec, sizeof nrec, 1, file) == 1 && nrec <= NREC &&
+                    fread(recs, sizeof recs[0], nrec, file) == nrec;
+        for (unsigned i = 0; valid && i < nrec; ++i) valid = recs[i].len <= GP5_STORE_MAX;
+        fclose(file);
+        if (valid) return 0;
+    }
+    fprintf(stderr, "Could not read emulator patches from %s\n", path);
+    return -1;
+}
+
+#ifdef SIM_LIVE
+static void publish_store(void)
+{
+    if (!store_dirty || atomic_load_explicit(&store_snapshot.full, memory_order_acquire)) return;
+    memcpy(store_snapshot.records, recs, nrec * sizeof recs[0]);
+    store_snapshot.count = nrec;
+    store_dirty = 0;
+    atomic_store_explicit(&store_snapshot.full, 1, memory_order_release);
+}
+
+void sim_store_flush(void)
+{
+    if (!atomic_load_explicit(&store_snapshot.full, memory_order_acquire)) return;
+    store_retry = write_store(store_snapshot.records, store_snapshot.count) != 0;
+    atomic_store_explicit(&store_snapshot.full, 0, memory_order_release);
+}
+
+int sim_store_close(void)
+{
+    if (!store_retry && !store_dirty && !atomic_load_explicit(&store_snapshot.full, memory_order_relaxed)) return 0;
+    return write_store(recs, nrec);
+}
+#endif
 static const char *files_dir;
 #define NFILE 64
 static struct { char name[32]; uint8_t *d; uint32_t len; } files[NFILE];
@@ -318,6 +398,9 @@ void sim_control(enum sim_control control, int value)
 
 void sim_block(const int32_t *in, int32_t *out)
 {
+#ifdef SIM_LIVE
+    publish_store();
+#endif
     static int32_t l[BLOCK], r[BLOCK];
     static int32_t ctl_in[512], ctl_out[512], delay[LINK_DELAY + 1][512], zero[512];
     static int32_t g_now;
@@ -372,9 +455,9 @@ int main(int argc, char **argv)
     long next_ms = -1; char next_op[32] = ""; long a1 = 0, a2 = 0;
     uint32_t shown_led = 0xFFFFFFFFu;
     if (argc != 9) { fprintf(stderr, "usage: sim <dsp library> <events> <in.raw> <out.raw> <shot dir> <seconds> <store|-> <files|->\n"); return 2; }
+    if (sim_store_open(argv[7])) return 2;
     ev = fopen(argv[2], "r"); fin = fopen(argv[3], "rb"); fout = fopen(argv[4], "wb");
     if (!ev || !fin || !fout) { fprintf(stderr, "can't open the events, in or out file\n"); return 2; }
-    if (strcmp(argv[7], "-")) store_file(argv[7], 0);
     if (strcmp(argv[8], "-")) { files_dir = argv[8]; load_files(); }
     if (sim_open(argv[1])) return 2;
     uint32_t total = (uint32_t)(atof(argv[6]) * rate / BLOCK + 0.5);
@@ -428,8 +511,8 @@ int main(int argc, char **argv)
     shot(argv[5], "end");
     fprintf(stderr, "screen: at most %lu bytes sent in one fw_draw call while running (one main-loop pass; the whole screen is %u;"
                     " the first full draw: %lu)\n", blit_most, 2u * GP5_SCREEN_W * GP5_SCREEN_H, blit_first);
-    if (strcmp(argv[7], "-")) store_file(argv[7], 1);
+    int result = store_dirty && write_store(recs, nrec) != 0;
     fclose(fout);
-    return 0;
+    return result;
 }
 #endif

@@ -5,7 +5,7 @@
 #include "live.h"
 #include "font5x7.h"
 
-enum { WIDTH = 912, HEIGHT = 520, LCD_W = 160, LCD_H = 128, KNOB_Y = 161, DRAG_STEP = 8 };
+enum { WIDTH = 912, HEIGHT = 614, LCD_W = 160, LCD_H = 128, PARA_X = 831, PARA_Y = 161, DRAG_STEP = 8 };
 enum { MOUSE = 1, KEY = 2 };
 
 static const uint32_t ink = 0xe8edf3, muted = 0xa0abb9, accent = 0x73d2c3;
@@ -86,7 +86,15 @@ static void disk(SDL_Renderer *r, int x, int y, int radius, uint32_t rgb)
     }
 }
 
-static int knob_x(int index) { return 576 + index * 88; }
+static int knob_x(int index)
+{
+    return knobs[index].control == SIM_PARA ? PARA_X : lcd.x + (2 * index + 1) * lcd.w / 6;
+}
+
+static int knob_y(int index)
+{
+    return knobs[index].control == SIM_PARA ? PARA_Y : lcd.y + lcd.h + 37;
+}
 
 static uint32_t led_color(uint32_t led)
 {
@@ -111,15 +119,15 @@ static void redraw(SDL_Renderer *r, SDL_Texture *screen, const char *title,
     text(r, 531, 76, 2, ink, "Controls");
     text(r, 531, 104, 2, muted, "Scroll or drag to turn");
     for (int i = 0; i < (int)SDL_arraysize(knobs); i++) {
-        int x = knob_x(i);
+        int x = knob_x(i), y = knob_y(i);
         double angle = ui->rotation[i] * (6.283185307179586 / 16.0);
-        disk(r, x, KNOB_Y, 25, ui->knob == i ? accent : 0x536173);
-        disk(r, x, KNOB_Y, 22, 0x2b3440);
-        disk(r, x + (int)(15.0 * sin(angle)), KNOB_Y - (int)(15.0 * cos(angle)), 2, ink);
-        text(r, x - 39, KNOB_Y - 6, 2, muted, "-");
-        text(r, x + 29, KNOB_Y - 6, 2, muted, "+");
-        center_text(r, x, 198, 2, ink, knobs[i].label);
-        center_text(r, x, 219, 1, muted, knobs[i].keys);
+        disk(r, x, y, 25, ui->knob == i ? accent : 0x536173);
+        disk(r, x, y, 22, 0x2b3440);
+        disk(r, x + (int)(15.0 * sin(angle)), y - (int)(15.0 * cos(angle)), 2, ink);
+        text(r, x - 39, y - 6, 2, muted, "-");
+        text(r, x + 29, y - 6, 2, muted, "+");
+        center_text(r, x, y + 37, 2, ink, knobs[i].label);
+        center_text(r, x, y + 58, 1, muted, knobs[i].keys);
     }
     for (unsigned i = 0; i < SDL_arraysize(buttons); i++) {
         SDL_Rect button = buttons[i].rect;
@@ -151,9 +159,9 @@ static void redraw(SDL_Renderer *r, SDL_Texture *screen, const char *title,
     } else {
         text(r, 751, 424, 1, muted, "Enter: PARA push");
     }
-    fill(r, 24, 474, WIDTH - 48, 1, 0x303843);
+    fill(r, 24, HEIGHT - 46, WIDTH - 48, 1, 0x303843);
     snprintf(audio, sizeof audio, "JACK: OpenGP5 GP-50 / in, out_l, out_r | DSP %u Hz", rate);
-    text(r, 24, 490, 2, muted, audio);
+    text(r, 24, HEIGHT - 30, 2, muted, audio);
     SDL_RenderPresent(r);
 }
 
@@ -175,8 +183,11 @@ static void press(struct ui_state *ui, int index, unsigned source, bool down)
 
 static int hit_knob(int x, int y)
 {
-    if (y < 132 || y >= 234 || x < 532 || x >= 884) return -1;
-    return (x - 532) / 88;
+    for (int i = 0; i < (int)SDL_arraysize(knobs); i++) {
+        int dx = x - knob_x(i), dy = y - knob_y(i);
+        if (dx >= -44 && dx < 44 && dy >= -29 && dy < 73) return i;
+    }
+    return -1;
 }
 
 static void move_expression(struct ui_state *ui, int x)
@@ -307,6 +318,7 @@ int sim_live_ui(const char *title, unsigned rate)
         while (show && sim_live_running()) {
             SDL_Event event;
             while (show && SDL_PollEvent(&event)) show = handle(renderer, &ui, &event);
+            sim_store_flush();
             if (show) {
                 ui.demo_playing = sim_live_demo_playing();
                 redraw(renderer, screen, title, &ui, rate);
