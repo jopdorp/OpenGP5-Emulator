@@ -307,6 +307,7 @@ int sim_live_ui(const char *title, unsigned rate)
         while (show && sim_live_running()) {
             SDL_Event event;
             while (show && SDL_PollEvent(&event)) show = handle(renderer, &ui, &event);
+            sim_store_flush();
             if (show) {
                 ui.demo_playing = sim_live_demo_playing();
                 redraw(renderer, screen, title, &ui, rate);

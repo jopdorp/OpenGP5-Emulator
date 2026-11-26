@@ -24,7 +24,8 @@ Connect `OpenGP5 GP-50:out_l` and `out_r` to your speakers or recorder in a
 patchbay. Connect a guitar source to `OpenGP5 GP-50:in` or add
 `--demo guitar.wav` to the command and press **Space** or click **Play Sample**.
 Scroll or drag to turn the knobs. Replace `tremolo` with the path to any
-compatible OpenGP5 firmware source directory.
+compatible OpenGP5 firmware source directory. Add `--store patches.store`
+to reopen saved patches in the next live or scripted session.
 
 The scripted simulator runs without JACK or SDL2. The default input is a
 plucked tone. It saves a stereo WAV and screenshots under `build/sim/`.

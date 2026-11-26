@@ -291,13 +291,20 @@ static void shutdown(void *unused)
 
 int main(int argc, char **argv)
 {
-    if (argc != 3 && argc != 5) {
-        fprintf(stderr, "usage: %s dsp.so title [demo.raw demo_rate]\n", argv[0]);
+    int next = 3;
+    const char *store = NULL;
+    if (argc > next && !strcmp(argv[next], "--store") && argc > next + 1) {
+        store = argv[next + 1];
+        next += 2;
+    }
+    if (argc != next && argc != next + 2) {
+        fprintf(stderr, "usage: %s dsp.so title [--store FILE] [demo.raw demo_rate]\n", argv[0]);
         return 2;
     }
+    if (sim_store_open(store)) return 1;
     if (sim_open(argv[1])) return 1;
     audio.firmware_rate = sim_rate();
-    if (argc == 5 && !load_demo(argv[3], audio.firmware_rate / strtod(argv[4], NULL))) {
+    if (argc == next + 2 && !load_demo(argv[next], audio.firmware_rate / strtod(argv[next + 1], NULL))) {
         fprintf(stderr, "Could not load the demo sample\n");
         free(demo.samples);
         return 1;
@@ -351,6 +358,8 @@ int main(int argc, char **argv)
 close:
     atomic_store(&running, false);
     jack_client_close(client);
+    apply_controls();
+    if (sim_store_close()) result = 1;
     src_delete(audio.output_src);
     src_delete(audio.input_src);
     free(demo.samples);

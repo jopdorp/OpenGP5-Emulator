@@ -10,6 +10,9 @@ enum sim_control {
 };
 
 int sim_open(const char *dsp_path);
+int sim_store_open(const char *path);
+void sim_store_flush(void);
+int sim_store_close(void);
 unsigned sim_rate(void);
 void sim_control(enum sim_control control, int value);
 void sim_block(const int32_t *in, int32_t *stereo_out);

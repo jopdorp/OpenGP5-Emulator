@@ -169,7 +169,7 @@ def main():
     if a.live:
         if not a.gp50:
             ap.error("--live requires --gp50")
-        if any((a.inp, a.out, a.script, a.seconds, a.shots, a.tone, a.store, a.files, a.knob != 255)):
+        if any((a.inp, a.out, a.script, a.seconds, a.shots, a.tone, a.files, a.knob != 255)):
             ap.error("--live takes input from the window and JACK. Use offline options without --live.")
         with tempfile.TemporaryDirectory(prefix="opengp5-live-") as d:
             d = pathlib.Path(d)
@@ -185,7 +185,8 @@ def main():
                 raw.write_bytes(samples.tobytes())
                 demo_args = [str(raw), str(rate)]
             lib, exe = build(fw, m, d, a.check, a.gp50, a.live, a.host_dsp)
-            return subprocess.call([str(exe), str(lib), m["name"], *demo_args])
+            store_args = ["--store", str(pathlib.Path(a.store).resolve())] if a.store else []
+            return subprocess.call([str(exe), str(lib), m["name"], *store_args, *demo_args])
     rate = m["audio"]["sample_rate"]
     names, choices, shown = param_names(fw)
     script = pathlib.Path(a.script).read_text() if a.script else ""
